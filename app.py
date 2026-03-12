@@ -97,11 +97,18 @@ if uploaded_files:
             for cell in ws[1]: # Bold headers
                 cell.font = cell.font.copy(bold=True)
 
+        # logic for custom filename
+        first_filename = uploaded_files[0].name[:10]
+        # Clean the filename in case of spaces or special characters
+        clean_name = re.sub(r'[^a-zA-Z0-9]', '_', first_filename)
+        
+        export_filename = f"{lang_code}_lengthcheck_{clean_name}.xlsx"
+
         # Download Button
         st.download_button(
             label="📥 Download Full Report (.xlsx)",
             data=output.getvalue(),
-            file_name=f"length_violations_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            file_name=export_filename,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     else:
