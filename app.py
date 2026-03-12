@@ -2,23 +2,28 @@ import streamlit as st
 import pandas as pd
 import io
 import re
+import zipfile
 from datetime import datetime
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter, column_index_from_string
-from openpyxl.styles import Alignment
 
 # --- CONFIG ---
 THRESHOLDS = {"F": 100, "G": 41, "H": 41, "I": 41, "J": 41, "K": 41}
+LANG_PATTERN = re.compile(r"^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,4})?$")
 
-st.set_page_config(page_title="Amazon Music Length Validator", layout="wide")
+st.set_page_config(page_title="Amazon Music ZIP Validator", layout="wide")
+
+def is_lang_folder(name: str) -> bool:
+    return bool(LANG_PATTERN.fullmatch(name))
 
 def excel_len(v) -> int:
     return len(str(v)) if v is not None else 0
 
-def process_excel(file, lang):
-    """Processes an uploaded Excel file in memory."""
-    # Load the uploaded file using BytesIO
-    wb = load_workbook(file, data_only=True)
+def process_excel(file_content, filename, lang):
+    """Processes Excel content from the ZIP in memory."""
+    # Use BytesIO to make the raw bytes readable by openpyxl
+    file_stream = io.BytesIO(file_content)
+    wb = load_workbook(file_stream, data_only=True)
     ws = wb.worksheets[0]
     
     violations = []
@@ -33,7 +38,7 @@ def process_excel(file, lang):
             if actual > needed:
                 violations.append({
                     "language": lang,
-                    "file": file.name,
+                    "file": filename,
                     "row": r,
                     "column": col_letter,
                     "needed_length": needed,
@@ -44,73 +49,65 @@ def process_excel(file, lang):
     return violations
 
 # --- UI ---
-st.title("🎵 Amazon Music Length Validator")
-st.markdown("""
-This tool checks character limits for localization files. 
-**Privacy Note:** Files are processed in your browser's session memory and are deleted immediately after use.
-""")
+st.title("📦 Amazon Music ZIP Validator")
+st.markdown("Upload a **ZIP file** containing language folders (e.g., `de-DE/`, `fr-FR/`).")
 
-# Sidebar for settings
-with st.sidebar:
-    st.header("Settings")
-    
-    # Language Dropdown
-    languages = ["de-DE", "es-ES", "es-MX", "fr-FR", "hi-IN", "it-IT", "ja-JP", "pt-BR"]
-    lang_code = st.selectbox("Select Language Code", options=languages, index=0)
-    
-    st.info(f"The report will be generated for: **{lang_code}**")
+uploaded_zip = st.file_uploader("Upload ZIP File", type=["zip"])
 
-# File Uploader
-uploaded_files = st.file_uploader(
-    "Upload Excel Files (.xlsx, .xlsm)", 
-    type=["xlsx", "xlsm"], 
-    accept_multiple_files=True
-)
-
-if uploaded_files:
+if uploaded_zip:
     all_violations = []
+    files_processed = 0
     
-    # Progress Bar
-    progress_bar = st.progress(0)
-    for idx, uploaded_file in enumerate(uploaded_files):
-        violations = process_excel(uploaded_file, lang_code)
-        all_violations.extend(violations)
-        progress_bar.progress((idx + 1) / len(uploaded_files))
+    with zipfile.ZipFile(uploaded_zip) as z:
+        # Get list of all files in the zip
+        file_list = [f for f in z.namelist() if f.lower().endswith(('.xlsx', '.xlsm')) and not f.split('/')[-1].startswith('~$')]
+        
+        if not file_list:
+            st.warning("No valid Excel files found in the ZIP.")
+        else:
+            progress_bar = st.progress(0)
+            
+            for idx, file_path in enumerate(file_list):
+                # Logic: path/to/de-DE/file.xlsx -> folder is "de-DE"
+                parts = file_path.split('/')
+                
+                # We look for a folder name in the path that matches our language pattern
+                lang = "unknown"
+                for p in parts:
+                    if is_lang_folder(p):
+                        lang = p
+                        break
+                
+                filename = parts[-1]
+                
+                with z.open(file_path) as f:
+                    content = f.read()
+                    violations = process_excel(content, filename, lang)
+                    all_violations.extend(violations)
+                
+                files_processed += 1
+                progress_bar.progress((idx + 1) / len(file_list))
 
     if all_violations:
         df = pd.DataFrame(all_violations)
-        
-        # UI Feedback
-        st.error(f"⚠️ Found {len(df)} violations across {len(uploaded_files)} files.")
-        
-        # Display Preview
-        st.subheader("Violation Preview")
+        st.error(f"⚠️ Found {len(df)} violations across {files_processed} files.")
         st.dataframe(df, use_container_width=True)
 
-        # Generate Report in memory
+        # Generate custom filename logic
+        first_orig_name = uploaded_zip.name[:10]
+        clean_name = re.sub(r'[^a-zA-Z0-9]', '_', first_orig_name)
+        export_filename = f"batch_lengthcheck_{clean_name}.xlsx"
+
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df.to_excel(writer, index=False, sheet_name="Violations")
-            
-            # Simple formatting for the output file
-            ws = writer.sheets["Violations"]
-            for cell in ws[1]: # Bold headers
-                cell.font = cell.font.copy(bold=True)
-
-        # logic for custom filename
-        first_filename = uploaded_files[0].name[:10]
-        # Clean the filename in case of spaces or special characters
-        clean_name = re.sub(r'[^a-zA-Z0-9]', '_', first_filename)
         
-        export_filename = f"{lang_code}_lengthcheck_{clean_name}.xlsx"
-
-        # Download Button
         st.download_button(
-            label="📥 Download Full Report (.xlsx)",
+            label="📥 Download Batch Report",
             data=output.getvalue(),
             file_name=export_filename,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-    else:
+    elif files_processed > 0:
         st.balloons()
-        st.success("✅ No violations found! All files are within character limits.")
+        st.success(f"✅ Scanned {files_processed} files. No violations found!")
