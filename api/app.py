@@ -1,3 +1,10 @@
+import os
+import sys
+
+# This forces Streamlit to run when Vercel calls the script
+if __name__ == "__main__" and "streamlit" not in sys.modules:
+    os.system(f"streamlit run {sys.argv[0]} --server.port 8080")
+
 import streamlit as st
 import pandas as pd
 import io
@@ -79,4 +86,5 @@ if uploaded_files:
         )
     else:
         st.balloons()
+
         st.success("No violations found!")
