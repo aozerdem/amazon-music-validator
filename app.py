@@ -53,8 +53,12 @@ This tool checks character limits for localization files.
 # Sidebar for settings
 with st.sidebar:
     st.header("Settings")
-    lang_code = st.text_input("Language Code", "de-DE")
-    st.info("The language code will be added to the report.")
+    
+    # Language Dropdown
+    languages = ["de-DE", "es-ES", "es-MX", "fr-FR", "hi-IN", "it-IT", "ja-JP", "pt-BR"]
+    lang_code = st.selectbox("Select Language Code", options=languages, index=0)
+    
+    st.info(f"The report will be generated for: **{lang_code}**")
 
 # File Uploader
 uploaded_files = st.file_uploader(
